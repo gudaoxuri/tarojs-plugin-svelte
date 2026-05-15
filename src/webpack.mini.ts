@@ -1,26 +1,33 @@
-import sveltePreprocess from 'svelte-preprocess'
-import { getLoaderMeta } from './loader-meta'
+import { getLoaderMeta } from "./loader-meta";
 
-export function modifyMiniWebpackChain(chain) {
-    chain.module
-        .rule('svelte')
-        .test(/\.svelte$/i)
-        .use('taroSvelteLoader')
-        .loader(require.resolve('./taroSvelteLoader'))
-        .options({
-            emitCss: true,
-            preprocess: sveltePreprocess({
-                typescript: {
-                    compilerOptions: {
-                        module: 'ESNext',
-                    }
-                }
-            })
-        })
+/**
+ * 为小程序构建注入 Svelte 所需的 webpack 配置。
+ *
+ * 与 H5 构建类似，这里会注册 `.svelte` loader，并把框架适配信息
+ * 注入给 Taro 的 mini 插件。
+ *
+ * @param chain Taro 暴露的 webpack-chain 实例。
+ */
+export function modifyMiniWebpackChain(chain: any) {
+  if (typeof chain.resolve.mainFields?.prepend === "function") {
+    chain.resolve.mainFields.prepend("svelte");
+  }
 
-    chain.plugin('miniPlugin')
-        .tap(args => {
-            args[0].loaderMeta = getLoaderMeta()
-            return args
-        })
+  if (typeof chain.resolve.conditionNames?.add === "function") {
+    chain.resolve.conditionNames.add("svelte");
+  }
+
+  chain.module
+    .rule("svelte")
+    .test(/\.svelte$/i)
+    .use("taroSvelteLoader")
+    .loader(require.resolve("./taroSvelteLoader"))
+    .options({
+      emitCss: true,
+    });
+
+  chain.plugin("miniPlugin").tap((args: any[]) => {
+    args[0].loaderMeta = getLoaderMeta();
+    return args;
+  });
 }

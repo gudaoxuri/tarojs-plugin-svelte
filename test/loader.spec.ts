@@ -1,92 +1,112 @@
-import taroSvelteLoader from '../lib/taroSvelteLoader'
+import taroSvelteLoader from "../src/taroSvelteLoader";
 
-jest.mock('@tarojs/webpack5-runner/dist/utils/component', () => ({
-    componentConfig: {
-        includes: new Set()
-    }
-}))
+jest.mock("@tarojs/webpack5-runner/dist/utils/component", () => ({
+  componentConfig: {
+    includes: new Set(),
+  },
+}));
 
-function testLoader(source: string, callback: (err: Error | null, code: string, map: string) => void) {
-    return done => {
-        const addedDependencies = new Set();
+const {
+  componentConfig,
+} = require("@tarojs/webpack5-runner/dist/utils/component");
 
-        function cb(...args) {
-            while (args.length < 4) {
-                args.push(undefined);
+/**
+ * 调用自定义 Svelte loader 并返回编译结果。
+ *
+ * @param source 待编译的 `.svelte` 源码。
+ * @returns 编译产物与依赖收集结果。
+ */
+function compileWithLoader(
+  source: string,
+): Promise<{ code: string; map: unknown; addedDependencies: Set<string> }> {
+  return new Promise((resolve, reject) => {
+    const addedDependencies = new Set<string>();
+
+    const cacheableSpy = jest.fn();
+    const dependencySpy = jest.fn((dependencyPath: string) => {
+      addedDependencies.add(dependencyPath);
+    });
+
+    taroSvelteLoader.call(
+      {
+        cacheable: cacheableSpy,
+        async() {
+          return (err: Error | null, code: string, map: unknown) => {
+            if (err) {
+              reject(err);
+              return;
             }
-            args.push(addedDependencies);
-            try {
-                // @ts-ignore
-                callback(...args);
-            } catch (err) {
-                expect(callbackSpy).toBeCalled();
-                return done(err);
-            }
-            expect(callbackSpy).toBeCalled();
-            done();
-        }
 
-        const cacheableSpy = jest.fn();
+            resolve({
+              code,
+              map,
+              addedDependencies,
+            });
+          };
+        },
+        addDependency: dependencySpy,
+        emitWarning: jest.fn(),
+        emitError: jest.fn(),
+        resourcePath: "<nil>.svelte",
+      },
+      source,
+      undefined,
+    );
 
-        const callbackSpy = jest.fn(cb);
-
-        const dependencySpy = jest.fn(function(p) { addedDependencies.add(p); });
-
-        taroSvelteLoader.call(
-            {
-                cacheable: cacheableSpy,
-                async: () => callbackSpy,
-                addDependency: dependencySpy,
-                resourcePath: '<nil>'
-            },
-            source,
-            null
-        );
-
-        expect(cacheableSpy).toBeCalled();
-
-        for (const call of dependencySpy.mock.calls) {
-            expect(typeof call[0]).toBe('string')
-        }
-    };
+    expect(cacheableSpy).toHaveBeenCalled();
+  });
 }
 
-describe('mini program', () => {
-    beforeAll(() => {
-        process.env.TARO_ENV = 'weapp'
-    })
+describe("taro svelte loader", () => {
+  beforeEach(() => {
+    componentConfig.includes.clear();
+  });
 
-    afterAll(() => {
-        process.env.TARO_ENV = undefined
-    })
+  it("should transform mini-program tags and collect used components", async () => {
+    process.env.TARO_ENV = "weapp";
 
-    it('should compile', testLoader(
-        '<t-view>hello, world</t-view>',
-        function(err, code, map) {
-            expect(err).toBeFalsy();
-            expect(code).toBeTruthy();
-            expect(map).toBeTruthy();
-            expect(code).toMatchSnapshot();
-        }
-    ))
-})
+    const { code, map } = await compileWithLoader(
+      "<t-view>hello, world</t-view>",
+    );
 
-describe('h5', () => {
-    beforeAll(() => {
-        process.env.TARO_ENV = 'h5'
-    })
+    expect(code).toMatch(/from_tree\(\[\[['"]view['"]/);
+    expect(code).not.toContain("taro-view-core");
+    expect(componentConfig.includes.has("view")).toBe(true);
+    expect(map).toBeTruthy();
+  });
 
-    afterAll(() => {
-        process.env.TARO_ENV = undefined
-    })
+  it("should transform h5 tags into taro custom elements", async () => {
+    process.env.TARO_ENV = "h5";
 
-    it('should compile', testLoader(
-        '<t-view>hello, world</t-view>',
-        function(err, code, map) {
-            expect(err).toBeFalsy();
-            expect(code).toBeTruthy();
-            expect(map).toBeTruthy();
-            expect(code).toMatchSnapshot();
-        }
-    ))
-})
+    const { code, map } = await compileWithLoader(
+      "<t-view>hello, world</t-view>",
+    );
+
+    expect(code).toMatch(/from_tree\(\[\[['"]taro-view-core['"]/);
+    expect(code).not.toContain("['view'");
+    expect(map).toBeTruthy();
+  });
+
+  it("should keep tap events on mini-program builds", async () => {
+    process.env.TARO_ENV = "weapp";
+
+    const { code } = await compileWithLoader(
+      "<t-view on:tap={() => {}}>hello, world</t-view>",
+    );
+
+    expect(code).toContain("$.event('tap'");
+  });
+
+  it("should rewrite tap events to click on h5 builds", async () => {
+    process.env.TARO_ENV = "h5";
+
+    const { code } = await compileWithLoader(
+      "<t-view on:tap={() => {}}>hello, world</t-view>",
+    );
+
+    // 必须是真正的事件监听，而不是一个名为 `click` 的普通属性。
+    expect(code).toContain("$.event('click'");
+    expect(code).not.toMatch(/set_attribute\([^)]*['"]click['"]/);
+    expect(code).not.toContain("'tap'");
+  });
+});

@@ -1,22 +1,21 @@
 {
-    "compilerOptions": {
-        "baseUrl": ".",
-        "outDir": "lib",
-        "module": "CommonJS",
-        "sourceMap": true,
-        "allowSyntheticDefaultImports": true,
-        "experimentalDecorators": true,
-        "moduleResolution": "node",
-        "noImplicitAny": false,
-        "noUnusedLocals": true,
-        "noUnusedParameters": true,
-        "removeComments": false,
-        "resolveJsonModule": true,
-        "skipLibCheck": true,
-        "target": "ES6",
-        "lib": ["DOM"]
-    },
-    "include": [
-        "src"
-    ]
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": "lib",
+    "module": "CommonJS",
+    "sourceMap": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "moduleResolution": "node",
+    "noImplicitAny": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "removeComments": false,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "target": "ES2020",
+    "lib": ["DOM", "ES2020"],
+    "types": [],
+  },
+  "include": ["src"],
 }
