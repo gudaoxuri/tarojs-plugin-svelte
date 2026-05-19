@@ -44,6 +44,18 @@ const loaderConfig = {
   ...base
 }
 
+// Svelte 虚拟 CSS 代理 Loader
+const styleLoaderConfig = {
+  input: path.join(__dirname, 'src/taroSvelteStyleLoader.ts'),
+  output: {
+    file: path.join(__dirname, 'lib/taroSvelteStyleLoader.js'),
+    format: 'cjs',
+    sourcemap: true,
+    exports: 'named'
+  },
+  ...base
+}
+
 // 供 Loader 使用的运行时入口
 const runtimeConfig = {
   input: path.join(__dirname, 'src/runtime/index.ts'),
@@ -55,4 +67,4 @@ const runtimeConfig = {
   ...base
 }
 
-export default [compileConfig, runtimeConfig, loaderConfig]
+export default [compileConfig, runtimeConfig, loaderConfig, styleLoaderConfig]

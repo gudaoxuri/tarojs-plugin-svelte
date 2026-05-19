@@ -8,6 +8,7 @@ const svelteLoaderModule = require("svelte-loader") as {
   ) => unknown;
 } & ((this: Record<string, any>, source: string, map?: string) => unknown);
 const svelteLoader = svelteLoaderModule.default ?? svelteLoaderModule;
+const taroSvelteStyleLoaderRequest = resolveTaroSvelteStyleLoaderRequest();
 const sveltePreprocessModule = require("svelte-preprocess") as {
   default?: (...args: any[]) => unknown;
 } & ((...args: any[]) => unknown);
@@ -39,6 +40,123 @@ function toArray<T>(value?: T | T[]): T[] {
   }
 
   return value == null ? [] : [value];
+}
+
+/**
+ * 解析样式代理 loader 的 webpack request 路径。
+ *
+ * 在真实构建中它会指向 `lib/taroSvelteStyleLoader.js`；在 ts-jest
+ * 环境中源码文件尚未编译成 js，因此需要回退到 `.ts` 文件路径。
+ *
+ * @returns 可直接放入 webpack request 的 loader 路径。
+ */
+function resolveTaroSvelteStyleLoaderRequest(): string {
+  let loaderPath: string;
+
+  try {
+    loaderPath = require.resolve("./taroSvelteStyleLoader");
+  } catch {
+    loaderPath = require.resolve("./taroSvelteStyleLoader.ts");
+  }
+
+  return loaderPath.replace(/\\/g, "/");
+}
+
+/**
+ * 把 `svelte-loader` 生成的“一次性虚拟 CSS 模块”改写成插件自己的样式代理。
+ *
+ * `svelte-loader` 在读取虚拟 CSS 后会立即从内部 Map 删除该 CSS。Taro 小程序端
+ * 使用 `mini-css-extract-plugin` 时，同一个 CSS 模块可能在构建与代码生成阶段被读取
+ * 多次，第二次读取会得到 `undefined`，最终让 `postcss-pxtransform` 访问
+ * `result.root.source.input` 时报错。这里改写为可缓存的代理 loader 来规避该问题。
+ *
+ * @param code `svelte-loader` 编译出的 JS 代码。
+ * @returns 改写后的 JS 代码。
+ */
+function rewriteSvelteCssImports(code: string): string {
+  return code.replace(
+    /!=!svelte-loader\?cssPath=/g,
+    `!=!${taroSvelteStyleLoaderRequest}?cssPath=`,
+  );
+}
+
+/**
+ * 删除小程序端错误的 Web Custom Element 属性设置路径。
+ *
+ * 小程序内置组件中存在 `open-data`、`scroll-view`、`cover-view` 等带连字符
+ * 的标签名。Svelte 会按 Web Custom Element 语义为这类标签生成
+ * `set_custom_element_data()`，该函数会访问浏览器专有的 `customElements`。
+ * 小程序逻辑层没有 Custom Elements registry，这里应走普通 attribute 设置，
+ * 而不是补一个假的 `customElements` 全局继续掩盖错误路径。
+ *
+ * @param code `svelte-loader` 编译出的 JS 代码。
+ * @returns 修正后的 JS 代码。
+ */
+function rewriteMiniProgramCustomElementSetters(code: string): string {
+  if (process.env.TARO_ENV === "h5") {
+    return code;
+  }
+
+  return code.replace(
+    /([\w$]+)\.set_custom_element_data\(/g,
+    "$1.set_attribute(",
+  );
+}
+
+/**
+ * 对 `svelte-loader` 编译后的 JS 做 Taro 平台修正。
+ *
+ * @param code `svelte-loader` 编译出的 JS 代码。
+ * @returns 修正后的 JS 代码。
+ */
+function rewriteCompiledSvelteCode(code: string): string {
+  return rewriteMiniProgramCustomElementSetters(
+    rewriteSvelteCssImports(code),
+  );
+}
+
+/**
+ * 调用原始 `svelte-loader`，并在异步回调中修正 CSS 虚拟模块 import。
+ *
+ * @param loaderContext webpack loader 上下文。
+ * @param source `.svelte` 文件源码。
+ * @param map 上游 sourcemap。
+ * @returns 原始 loader 的返回值。
+ */
+function callSvelteLoader(
+  loaderContext: Record<string, any>,
+  source: string,
+  map?: string,
+): unknown {
+  const originalAsync = loaderContext.async;
+
+  if (typeof originalAsync !== "function") {
+    return svelteLoader.call(loaderContext, source, map);
+  }
+
+  loaderContext.async = function patchedAsync(this: Record<string, any>) {
+    const callback = originalAsync.call(this);
+
+    return (
+      err: Error | null,
+      code: string,
+      outputMap?: unknown,
+      meta?: unknown,
+    ) => {
+      callback(
+        err,
+        !err && typeof code === "string" ? rewriteCompiledSvelteCode(code) : code,
+        outputMap,
+        meta,
+      );
+    };
+  };
+
+  try {
+    return svelteLoader.call(loaderContext, source, map);
+  } finally {
+    loaderContext.async = originalAsync;
+  }
 }
 
 /**
@@ -187,7 +305,7 @@ function taroSvelteLoader(
     });
 
     try {
-      return svelteLoader.call(this, source, map);
+      return callSvelteLoader(this, source, map);
     } finally {
       originalEntries.forEach((entry, key) => {
         if (entry.exists) {
@@ -214,7 +332,7 @@ function taroSvelteLoader(
   });
 
   try {
-    return svelteLoader.call(this, source, map);
+    return callSvelteLoader(this, source, map);
   } finally {
     if (originalOwnQueryDescriptor) {
       Object.defineProperty(this, "query", originalOwnQueryDescriptor);

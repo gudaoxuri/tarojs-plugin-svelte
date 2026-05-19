@@ -1,3 +1,6 @@
+const buildTarget = process.env.TARO_ENV || "weapp";
+const outputRoot = buildTarget === "h5" ? "dist/h5" : `dist/${buildTarget}`;
+
 const config = {
   projectName: "example",
   date: "2023-1-16",
@@ -9,7 +12,7 @@ const config = {
     828: 1.81 / 2,
   },
   sourceRoot: "src",
-  outputRoot: "dist",
+  outputRoot,
   plugins: ["tarojs-plugin-svelte"],
   defineConstants: {},
   copy: {
